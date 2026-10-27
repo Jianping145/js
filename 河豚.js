@@ -355,10 +355,14 @@ function makeHandlers(runtime) {
       const result = await runtime.getJson('/api/ex/v3/security/tag/list');
       let data = result.data;
       if (data && typeof data === 'string' && !['[', '{'].includes(data.trim()[0])) {
-        data = aesDecryptEcb(data, state.dataKey);
-        data = aesDecryptEcb(data, state.dataIv);
+        try {
+          data = aesDecryptEcb(data, state.dataKey);
+          data = aesDecryptEcb(data, state.dataIv);
+        } catch {
+          try { data = JSON.parse(data); } catch { data = []; }
+        }
       }
-      const blocks = Array.isArray(data) ? data : JSON.parse(String(data || '[]'));
+      const blocks = Array.isArray(data) ? data : (typeof data === 'string' ? JSON.parse(data || '[]') : []);
       const videos = [];
       for (const block of blocks) for (const section of listOf(block.sections)) for (const vod of listOf(section.vodList)) {
         videos.push({ vod_id: String(vod.id || ''), vod_name: text(vod.name), vod_pic: text(vod.coverImage?.path), vod_remarks: text(vod.remark) });
@@ -435,8 +439,14 @@ function makeHandlers(runtime) {
     if (!keyword) return { page, pagecount: 1, limit: 21, total: 0, list: [] };
     try {
       const raw = await runtime.post('/api/proto/v5/drama/search', runtime.secureBody({ searchKeys: keyword, page: String(page), pagesize: '21' }));
-      const list = runtime.parseDramaPage(raw).slice(0, 1);
-      return { page, pagecount: list.length ? page + 1 : page, limit: 21, total: list.length, list };
+      const list = runtime.parseDramaPage(raw);
+      return {
+        page,
+        pagecount: list.length >= 21 ? page + 1 : page,
+        limit: 21,
+        total: list.length,
+        list,
+      };
     } catch { return { page, pagecount: 1, limit: 21, total: 0, list: [] }; }
   }
 
