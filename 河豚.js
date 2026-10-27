@@ -380,16 +380,21 @@ function configure(values) {
 }
 
 async function loadRemoteConfig() {
-  if (!state.host || !/\.(?:txt|json)$/i.test(state.host)) return;
+  const fallback = 'http://43.240.158.154:18004';
+  if (!state.host) { state.host = fallback; return; }
+  if (!/\.(?:txt|json)$/i.test(state.host)) return;
   try {
     const raw = await httpRequest(state.host, { timeout: 12000 });
     let config = objectOf(raw);
     if (!Object.keys(config).length && typeof raw === 'string') {
-      const match = raw.replace(/(?:export\s+default\s+|module\.exports\s*=)|\/\/.*?$|\/\*[\s\S]*?\*\//gm, '').match(/\{[\s\S]*\}/);
+      const match = String(raw).match(/\{[\s\S]*\}/);
       if (match) config = objectOf(match[0]);
     }
     if (config.domain) state.host = trim(config.domain).replace(/\/$/, '');
-  } catch (e) {}
+  } catch (e) {
+    state.host = fallback;
+  }
+  if (/\.(?:txt|json)$/i.test(state.host)) state.host = fallback;
 }
 
 function device() {
@@ -407,22 +412,25 @@ function device() {
 }
 
 function publicHeaders(protobuf) {
-  const current = device();
-  const timestamp = Date.now();
-  const random = randomString(16);
-  current.sig = rsaEncrypt(String(timestamp) + random + (current.vApp || '3019'), state.rsaN, state.rsaE);
-  current.random_str = random;
-  current.timestamp = timestamp;
-  const signature = aesEncryptEcb(String(timestamp) + random, state.dataIv);
-  current.sig2 = signature.slice(0, 8);
-  current.sig3 = signature.slice(8);
-  const paramsData = aesEncryptCbcHex(JSON.stringify(current), COMMON_KEY);
-  return {
+  const headers = {
     'User-Agent': USER_AGENT,
     Accept: protobuf ? 'application/x-protobuf' : 'application/json',
     'Content-Type': protobuf ? 'application/x-protobuf' : 'application/json; charset=utf-8',
-    publicParams: JSON.stringify({ paramsData: paramsData }),
   };
+  try {
+    const current = device();
+    const timestamp = Date.now();
+    const random = randomString(16);
+    current.sig = rsaEncrypt(String(timestamp) + random + (current.vApp || '3019'), state.rsaN, state.rsaE);
+    current.random_str = random;
+    current.timestamp = timestamp;
+    const signature = aesEncryptEcb(String(timestamp) + random, state.dataIv);
+    current.sig2 = signature.slice(0, 8);
+    current.sig3 = signature.slice(8);
+    const paramsData = aesEncryptCbcHex(JSON.stringify(current), COMMON_KEY);
+    headers.publicParams = JSON.stringify({ paramsData: paramsData });
+  } catch (e) {}
+  return headers;
 }
 
 function secureBody(params) {
@@ -541,7 +549,7 @@ async function init(ext) {
   return {};
 }
 
-async function home() {
+async function home(filter) {
   try {
     await ensureInitialized();
     const result = await getJson('/api/v3/drama/getCategory?orderBy=type_id');
@@ -549,7 +557,7 @@ async function home() {
       return { type_id: String(item.id || ''), type_name: String(item.name || '') };
     }).filter(function (item) { return item.type_id; });
     return { class: classes, filters: {}, list: [] };
-  } catch (e) { return { class: [], filters: {}, list: [] }; }
+  } catch (e) { return { class: [], filters: {}, list: [], msg: String((e && e.message) || e) }; }
 }
 
 async function homeVod() {
@@ -689,4 +697,17 @@ async function play(flag, id, flags) {
   } catch (e) { return { parse: 1, url: playId, header: {} }; }
 }
 
-export default { init: init, home: home, homeVod: homeVod, category: category, detail: detail, search: search, play: play };
+
+function createSpider(site) {
+  return {
+    init: init,
+    home: home,
+    homeVod: homeVod,
+    category: category,
+    detail: detail,
+    search: search,
+    play: play,
+  };
+}
+export default createSpider;
+
